@@ -46,8 +46,8 @@ The previous post was written to be a direct proof of the algebraic, geometric, 
 ```{r, echo=FALSE, message=FALSE}
 library(slam)
 library(Matrix)
-source("C:/Users/sramesh/Documents/GitHub/helper.R") #helper functions
-source("C:/Users/sramesh/Documents/GitHub/spkmeans.R")
+source("helper.R") #helper functions
+source("spkmeans.R")
 load("inputdata.rdata")
 stationgeo<- read.csv("bikeStationLatLong.csv",header=FALSE)
 names(stationgeo) <- c("station","lat","long")

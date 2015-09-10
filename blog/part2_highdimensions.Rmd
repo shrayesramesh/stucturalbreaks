@@ -108,10 +108,10 @@ Noticable immediately is that big red splotch in the middle between minute 237 a
 ```{r ,echo=FALSE}
 library(slam)
 library(Matrix)
-load("C:/Users/sramesh/Documents/GitHub/text-analysis/DISCONTINUITIES/superbowl.RData")
-source("C:/Users/sramesh/Documents/GitHub/helper.R") #helper functions
-source("C:/Users/sramesh/Documents/GitHub/spkmeans.R")
-palette <- readLines(file.path("C:/Users/sramesh/Documents/GitHub","colorpalette.txt"))
+load("superbowl.RData")
+source("helper.R") #helper functions
+source("spkmeans.R")
+palette <- readLines("colorpalette.txt")
 palette <- rep(palette,2)
 
 dtm <- output$sourcedata
