@@ -1,0 +1,353 @@
+---
+title: "Background: Structural Breaks in One Dimension"
+output:
+  html_document:
+    fig_width: 7
+    fig_height: 6
+    fig_caption: true
+---
+
+###A blog series on structural breaks in high dimensions
+
+We live in a world of massive data collection, where collecting and storing data is cheap and easier than ever. However, it often appears the technology to collect and store data far exceeds the development of questions to ask of massive data sets and tangible, scalable methods to answer those questions. This blog series seeks to address that gap, by posing a tangible question to ask of high-dimensional time series data, and providing a methodology to answer those questions.
+
+So let's suppose you have collected data for a long period of time. For example, say you've collected a database of tweets for the last week, or keep logs on network traffic for the last month, or collect records of every bike trip in your Bikeshare system for the last four years, or keep tabs on historical stock prices, etc. Here are four questions at some point you will want to ask of this data:
+
+* Did a previously unknown event happen whose effect can be measured by my data?
+* When did this event happen?
+* Did this event cause a  persistent change to the human behavior generating my data?
+* How much is the effect of the event on measurables in my data?
+
+For example, in a database of tweets, you might want to identify when the conversation on Twitter changes by measuring word usage over time. For a set network logs, you might want to find an infected computer by noticing that the set of other computers it tries to connect to changes persistently after the infection. For transportation data like Bikeshare you might want to measure the impact of public policy changes on traffic patterns. The set of these questions are all seeking to understand the same thing: *what is the timing and impact of a structural break?*
+
+This blog series is in three parts. The first part introduces structural breaks in a single dimensional time series, and provides an overview of how to answer the four questions above given some simulated data.
+
+Part two extends the discussion of structural breaks to higher dimensions. I present is a novel but simple algorithm that is rooted strongly in classical hypothesis testing. As a good example of the type of results, I run the algorithm against tweets surrounding the 2013 Super Bowl to show how we can find "unknown" events in near real time, as in the case of the power outage in the Superdome that happened that year.
+
+Finally, part three is a stand alone article demonstrating the impact of the government shutdown of 2013 on the Washington DC Capital Bikeshare system. The point is to show that the very basic idea of structural breaks and the classical hypothesis test used to answer whether a structural break happens can be used to solve problems in dynamic graph theory.
+
+---
+
+###Structural breaks in a single dimension: the parametric approach
+
+Before explaining a procedure to identify and test for structural breaks in high dimensions, I introduce here some background on breaktesting in a single dimension.
+
+To illustrate how structural breaks works, let's work with some simulated data. We first generate a time series of 200 time intervals, with a breakpoint halfway through the dataset. The data is drawn from a normal distribution with a mean shift at the specified breakpoint chosen:
+
+```{r}
+maxT <- 200
+breakpoint = maxT/2
+truelabel = 1:maxT < breakpoint
+
+mu1 = 10
+mu2 = 15
+sd = 2
+
+simdata = data.frame(timestamp = 1:maxT,
+                     truelabel = ifelse(truelabel,"pre","post"),
+                     value = c(rnorm(breakpoint,mu1,sd),
+                               rnorm(maxT-breakpoint,mu2,sd)))
+
+plot(simdata$timestamp, simdata$value, xlim=c(1,maxT+20),ylim = c(0,1.5*mu2), type='l',
+     xlab="t",ylab="x", col='black', main= "Simulated data with structural break")
+
+```
+
+
+The simulated data is used to illustrate how we identify two things:
+
+* *whether* a structural break is statistically significant at a potential *candidate* time period
+* the exact time interval *when* a structural break is most likely to have occured
+
+Initially, we'll discuss the first problem, identifying whether a structural break is statistically significant at a candidate time t. Using the simulated data, let's start by testing whether there is a significant break at a point just after the real breakpoint of `r breakpoint`. We'll then go back and show that the estimated most likely breakpoint is in fact the real breakpoint.
+
+There are two major approaches to hypothesis testing whether a structural break is significant: the **parametric** approach and the **nonparametric** approach. The approach we use in high dimensions is nonparametric, but it's important to understand the parametric approach because that approach is far more common in practice. 
+
+-----
+
+The **parametric** approach works by splitting the data into three subsets: a "pooled" dataset containing all of the time periods, and a "split" data set containing the two sets of points before and after the candidate break:
+
+```{r}
+testpoint = breakpoint+5
+set_pooled = 1:maxT
+set_pre = 1:testpoint
+set_post = (testpoint+1):maxT
+```
+
+ The parametric approach makes assumptions about the probability distribution generating the data across time, estimates the optimal parameters of those distributions, and then tests whether the parameters have changed. This type of test is a *Wald test*. An equivalent parametric approach uses a *likelihood ratio test* to see how much better the likelihood of the data given a split model is relative to a pooled model.
+
+ In our example, a Wald test tests whether the difference in the means of the two split group is significantly different from zero. We can test whether the difference in split model means $H_{0}: \theta_{1} - \theta_{2} = 0$ versus the altnerative $H_{1}: \theta_{1} - \theta_{2} \neq 0$. The actual test statistic is on Wikipedia.
+ 
+ Alternatively, a likelihood ratio test fits a distribution for the data $f(x;t,\theta)$ then compares the likelihood of the pooled model versus model split at the candidate s:  $\frac{ L(\{x_{t}\};\hat{\theta_{0}}) }{  L(\{x_{1:s}\};\hat{\theta_{1}) * L(\{x_{(s+1):T}}\};\hat{\theta_{2}})}$.
+ 
+You can read more about these two tests here:
+
+* [Wald test](http://en.wikipedia.org/wiki/Wald_test)
+* [Likelihood-ratio test](http://en.wikipedia.org/wiki/Likelihood-ratio_test)
+* [Engle, Handbook of Econometrics](http://www.stern.nyu.edu/rengle/LagrangeMultipliersHandbook_of_Econ__II___Engle.pdf). As the data size gets large both parametric tests converge to the same test.
+ 
+
+```{r ,echo=FALSE}
+mean_pooled = mean(simdata$value[1:maxT])
+mean_pre = mean(simdata$value[set_pre])
+mean_post = mean(simdata$value[set_post])
+
+plot(simdata$timestamp,simdata$value, xlim=c(1,maxT+20),ylim = c(0,1.5*mu2), type='l',
+     xlab="t",ylab="x", col='black', main= "Parametric hypothesis tests")
+segments(c(1,testpoint+1,1),c(mean_pre,mean_post,mean_pooled),
+         c(testpoint,maxT,maxT),c(mean_pre,mean_post,mean_pooled),
+         col='darkblue', lty = 'dashed')
+abline(v=testpoint, col='red', lty='dotted')
+
+text(testpoint,mean_pre, expression(paste("f(x;t,",hat(theta)[1],")")), pos=4, cex=1,
+     col='#004400')
+text(maxT,mean_post, expression(paste("f(x;t,",hat(theta)[2],")")), pos=4, cex=1,
+     col='#004400')
+text(maxT,mean_pooled, expression(paste("f(x;t,",hat(theta)[0],")")), pos=4, cex=1,
+     col='#004400')
+
+```
+
+The above figure illustrates the parametric approach at the candidate breakpoint highlighted in red. We split the data into two time intervals before and after the candidate break at the red line. A parametric model is fit to the pooled data to estimate $\theta_{0}$ and then to each of the two groups to estimate $\theta_{1}$ and $\theta_{2}$. The Wald test compares the split model parameters against the pooled parameters. In the above example, a simple "parametric model" could estimate as parameters the mean of the data. The Wald test for that example is very similar to the classical T-test comparison of differences in means.
+
+The major benefit of parametric approaches to breaktesting is that in addition to checking whether a break is significant, they also typically can tell something about the *effect size* of the break, captured in the parameters themselves. This benefit is very appealing, however it relies on identifying the correct parametric model appropriate for the data. The major drawback of parametric approaches are that often the data generating process is too complicated to model and estimate correctly (as it tends to be with more complicated models in higher dimensions).
+
+-----
+
+###Structural breaks in a single dimension: the non-parametric approach
+
+In contrast to the parametric approach to breaktesting, the **nonparametric** approach does not really care too much about the underlying data-generating distribution for the time series. Instead, it relies on a **distance measurement**. In our example, we start by computing all pairwise distance measurements between time periods. An element of the pairwise distance matrix $M$ is $m_{t_{i},t_{j}} = \|x_{t_{i}} - x_{t_{j}}\|$. If we plot a heatmap of the matrix, we get the following (note the origin is at the bottom left):
+
+```{r}
+#pairwise distances
+dmat <- outer(simdata$value,simdata$value, function(X,Y) abs(X-Y))
+```
+
+```{r ,echo=FALSE}
+annotatecolordark = 'green'
+annotatecolorlight = 'green'
+image(1:maxT,1:maxT,dmat, main="Pairwise distances", col= gray((0:100)/100))
+abline(v=testpoint,col='red',lw=5,lty='dotted')
+abline(h=testpoint,col='red',lw=5,lty='dotted')
+text(testpoint/2,testpoint/2,"Within group 1", col=annotatecolorlight,cex=1)
+text(maxT-(maxT-testpoint)/2,maxT-(maxT-testpoint)/2,"Within group 2", col=annotatecolorlight,cex=)
+text(testpoint/2,maxT-(maxT-testpoint)/2,"Between groups", col=annotatecolordark,cex=1)
+text(maxT-(maxT-testpoint)/2,testpoint/2,"Between groups", col=annotatecolordark,cex=1)
+
+```
+
+If we cut the matrix at the candidate breakpoint (the red lines), the four "quadrant" submatrices produced correspond to within-group and between-group distances. The block diagonals (the bottom left and top right quadrant on this heatmap) are distances between two points on the same side of the candidate breakpoint. The off-diagonals (the top left quadrant in the picture) are all of the distances between elements on different sides of the breakpoint.
+
+Using this matrix and the blocks on the matrix, we can construct statistics we can use to conduct a hypothesis test. The null hypothesis here is $H0:$ the data is stationary; that the data comes from the same distribution before and after the candidate break. Similar in spirit to ANOVA, all we need to do to reject the null hypothesis is to ask whether the between-group distances are much larger than the within-group distances. 
+
+One such statistic is **energy distance**, used in twitter's [breakout detection](https://blog.twitter.com/2014/breakout-detection-in-the-wild) algorithm. Other good references are [Anderson](
+http://entocert.net/PDF/MUVE/6_NewMethod_MANOVA1_2.pdf) on MANOVA and the literature on [distance statistics](http://projecteuclid.org/euclid.aoas/1280842151) more generally.
+
+Deriving a closed-form distribution of the test statistic under the null hypothesis is nontrivial. It's especially important to note that since we have *pairwise* distances, elements on the same row and same column of M are correlated and not independent. (There's a common sample point that generates those distances. If that point moves, the row and column containing that point also move). 
+
+Do not despair, however, as we can disprove the null by running a permutation test. If the data were truly stationary (under the null hypothesis), we could randomly reorder the rows and columns of the matrix and the statistic should not change much. In fact, if we take enough random permutations of the time series, we can approxmiate the distribution of the test statistic and construct a permutation-based quantiles for the test statistic. If the value of the statistic computed under the *actual* ordering of the data lies outside the interval, we reject the null and state that the data is nonstationary, and that a structural break occured.
+
+To illustrate an example of the nonparametric test on our simulated data, we use our distance matrix and compute the sum of the elements of each of the four quadrant blocks on the distance matrix. Noting our candidate break as $t$, define:
+$$S_{11} = \sum_{i\in 1:t}\sum_{j\in 1:t} m_{i,j} \\
+S_{22} = \sum_{i\in (t+1):T}\sum_{j\in (t+1):t} m_{i,j} ,\\
+S_{12} = \sum_{i\in 1:t}\sum_{j\in (t+1):t} m_{i,j} \\
+S_{12} = S_{21}$$
+
+Given the four block sums, our test statistic is 
+$$V = 2*S_{12} - S_{11} - S_{22}$$
+
+Below we compute the test statistic at the candidate breakpoint, as well as 500 bootstrapped permutations of that test statistic.
+
+```{r}
+#function of the distance matrix and the candidate breakpoint b
+stat_func <- function(m,b) {
+  l <- dim(m)[1]
+  g1 <- 1:b
+  g2 <- (b+1):l
+  2*sum(m[g1,g2]) - sum(m[g1,g1]) -sum(m[g2,g2])
+}
+
+teststat <- stat_func(dmat,testpoint)
+nboots <- 100
+boots <- sapply(1:nboots, function(s){
+  #reshuffle the data (with replacement)
+  i <- sample(1:maxT,maxT,replace=FALSE)
+  stat_func(dmat[i,i],testpoint)
+  })
+
+hist(boots,breaks=40, main = "Permutation estimate of the distribution under H0")
+```
+
+We reject the null hypothesis if our test statistic is in the far tails of this distribution, which in this case is true:
+
+```{r}
+teststat
+quantile(boots,c(.5,.95,.99))
+teststat >quantile(boots,.99)
+```
+
+From the above example it should be clear that nonparametric approach is extremely simple to implement and code. It has the benefit that it makes no underlying model assumptions other than what drove the choice of the distance measurement. On the other hand, the statistic itself is not a parameter estimate and hence may not naturally tell you the *effect* occuring at the breakpoint.
+
+
+---
+
+###Structural breaks: identifying the timing of unknown events
+
+Until this point, I've discussed how to conduct a test of whether a structural break occured at an *alleged* breakpoint. In this section, we'll demonstrate how to identify *when* a break happened without prior knowledge.
+
+In the economics literature, identifying timing of structural breaks is well-studied problem. For an in depth summary, try [Perron, Handbook of Economics](http://people.bu.edu/perron/papers/dealing.pdf).
+
+Suppose we run an experiment and calculate the test statistic at every possible time interval. Consider rolling windows of a prespecified size, and imagine running the above hypothesis test on each of those windows. In simple words, **the test statistic calculated at the correct breakpoint will be a local extremum of the test statistic across time**. That's the pretty basic result. First, I'll illulstrate the algorithm, and then follow up with a more formal (but still informal) proof.
+
+The following algorithm is used to identify the timing of unknown structural breaks:
+
+1. Choose a **bandwidth** parameter D. This parameter should be "large enough" to make the hypothesis test powerful
+2. For each candidate time interval t:
+  + take the windowed submatrix  $M(t;D)$ of the entire matrix $M$ for the the set of points in the window $D$ time points before and after t, the current candidate time. $m_{ij} : i,j \in (t-D):(t+D-1)$
+  + compute the test statistic and bootstrap from above $V(t) = 2*S_{12} - S_{11} - S_{22}$, using the matrix for the window $M(t;D)$, considering the candidate break to occur at t
+3. Find the local optima, the argmax $V(t)$
+
+Here is the algorithm in action:
+```{r}
+#pick a bandwidth
+D<- 20
+
+#timecompare is time indices to test (have to omit beginning and end of length D)
+timecompare = (D+1):(maxT-D+1)
+#for each t in timecompare
+v<- sapply(timecompare, function(t){
+    #create subset matrix 
+    pre_set <- (t-D):(t-1)
+    post_set <- (t):(t+D-1)
+    m <- dmat[c(pre_set,post_set),c(pre_set,post_set)]
+    
+    #compute statistic
+    teststat <- stat_func(m,D)
+    boots <- sapply(1:nboots, function(s){
+      #reshuffle the data (with replacement)
+      i <- sample(1:(2*D),2*D,replace=FALSE)
+      stat_func(m[i,i],D)
+      })
+
+    #find the pctile intervals off of the bootstrap
+    boot = quantile(boots,c(.5,.95,.99))
+    
+    #return statistic and bootstrap confidence intervals
+    c(teststat,boot)
+  })
+```
+
+Below is the output of the original simulated data followed by the output from the test statistic $V(t)$ along with the bootstrap.
+
+```{r, echo=FALSE}
+
+plotstat <- function(v) {
+  ylim = c(min(v),max(v))
+  plot(timecompare,v[1,], type='l', main="Test statistic with bootstrap", xlim=c(1,maxT+20),ylim=ylim,
+       ylab="statistic",xlab="t")
+  lines(timecompare,v[2,], col='red')
+  lines(timecompare,v[3,], col='red')
+  lines(timecompare,v[4,], col='red')
+}
+
+b<- timecompare[which.max(v[1,])]
+
+par(mfrow=c(2,1))
+plot(simdata$timestamp, simdata$value, xlim=c(1,maxT+20),ylim = c(0,1.5*mu2), type='l',
+     xlab="t",ylab="x", col='black', main= "Simulated data")
+abline(v=b, lty='dashed',col='blue')
+plotstat(v)
+abline(v=b, lty='dashed',col='blue')
+par(mfrow=c(1,1))
+
+```
+
+The black line is the test statistic, while the red lines are the median, 95th, and 99th percentiles for the bootstrap. The blue line denotes where the maximum of the test statistic lies. This time period the first time period where we think the time series changes. We estimated it correctly:
+
+```{r}
+timecompare[which.max(v[1,])]
+```
+
+---
+
+This article covered structural breaks in a single dimension. The next one extends this idea to high-dimensional data.
+
+---
+
+For a mathier audience, let's go back to our proposition and provide a pseudo-proof of the proposition:
+**the test statistic calculated at the correct breakpoint will be a local extremum of the test statistic across time**
+
+Suppose we have a window of size $2D$, and that there is indeed a true structural break at time $s \in [1,D]$. However, we don't know $s$ and instead estimate the statistic at the midpoint $t=D$.
+ For simplicity of exposition, suppose that the data is drawn from a distribution with no variance (adding randomness just makes the proof more difficult to derive, but not less true)-- this means the real data are constants
+$$ x_{i} = \theta_{1} + 1(i>s) (\theta_{2}-\theta{1}) $$
+
+The distance matrix will then look something like the following, denoting $\delta = t-s$ equal to "how far off" the candidate break $t$ is from the truth $s$. The proof follows by showing that the statistic is is at an extremum when $\delta=0$
+
+```{r ,echo=FALSE}
+
+L <- 2*D
+off = 5
+sim_novar <- c(rep(mu1,D-off),rep(mu2,D+off))
+dmat_novar <- outer(sim_novar,sim_novar, function(X,Y) abs(X-Y))
+
+image(1:(2*D),1:(2*D),dmat_novar, main="Pairwise distances", col= gray((1:100)/100))
+abline(v=D,col='blue',lw=5)
+abline(h=D,col='blue',lw=5)
+abline(v=D-off+.5,col='yellow',lw=5,lty='dotted')
+abline(h=D-off+.5,col='yellow',lw=5,lty='dotted')
+
+text((D-off)/2,(D-off)/2,
+     expression(paste(m[ij],"=||",theta[1],"-",theta[1],"||=0")),
+     col=annotatecolorlight,cex=1)
+text(2*D-(D+off)/2, 2*D-(D+off)/2,
+     expression(paste(m[ij],"=||",theta[2],"-",theta[2],"||=0")),
+     col=annotatecolorlight,cex=1)
+text((D-off)/2, 2*D-(D+off)/2,
+     expression(paste(m[ij],"=||",theta[2],"-",theta[1],"||")),
+     col=annotatecolorlight,cex=1)
+text(2*D-(D+off)/2, (D-off)/2,
+     expression(paste(m[ij],"=||",theta[2],"-",theta[2],"||=0")),
+     col=annotatecolorlight,cex=1)
+
+text(2*D-1, (D-off)/2,
+     expression(paste("D-",delta)),
+     col='red',cex=1)
+text(2*D-1, D-off/2,
+     expression(delta),
+     col='red',cex=1)
+text(2*D-1, 2*D-D/2,
+     expression(D),
+     col='red',cex=1)
+
+text(D-off+.5,D-off+.5,
+     "(s,s)",
+     col='red',cex=1)
+text(D,D,
+     "(t,t)=(D,D)",
+     col='red',cex=1)
+
+
+#text(testpoint/2,maxT-(maxT-testpoint)/2,"Between groups", col=annotatecolordark,cex=1)
+#text(maxT-(maxT-testpoint)/2,testpoint/2,"Between groups", col=annotatecolordark,cex=1)
+
+```
+
+
+The test statistic is calculated by first calculating the sum of the four four quadrants of the distance matrix from the vantage point of $t=D$. Visually, this amounts to finding areas of the rectangles (separated by the blue line) on the distance matrix
+
+$$S_{11} = 2 \delta (D-\delta) \|\theta_{2}-\theta{1}\| \\
+S_{22} = 0 \\
+S_{12} = S_{21} = (D-\delta) D \|\theta_{2}-\theta{1}\|$$
+
+
+The test statistic, in terms of $\delta$ is
+$$V(\delta) = 2 S_{12} - S_{11} - S_{22} \\
+= 2 (D-\delta)^{2} \|\theta_{2}-\theta{1}\| $$
+
+
+This statistic $V(\delta)$ reaches a local maximum at $\delta=0$. Since $\delta=0$ corresponds to the candidate break equal to the true break $t=s$, this finishes the pseudo-proof. It's fairly straightforward to show that the proof works for $s>t$ too.
+
+
+---
+
+

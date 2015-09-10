@@ -1,0 +1,195 @@
+---
+title: "Identifying and estimating the impact of the government shutdown on the Capital Bikeshare network"
+output:
+  html_document:
+    fig_width: 12
+    fig_height: 10
+    fig_caption: true
+---
+
+The last two posts (1) discussed how to check for the existence and timing of a structural break in a time series of scalars, and (2) introduced the cosine similarity between sample means nonparametric hypothesis test as a cheap way to extend structural breaks analysis to high-dimensional time series. This post (1) discusses the cosine similary measure as a way to compute distances between network graphs, placing it in the context of the literature in dynamic networks, and (2) applies the analysis to open-source Capital Bikeshare data to identify and estimate the impact of the government shutdown. Let's get to it.
+
+---
+
+###Dynamic graphs and a cheap similarity metric between two graphs
+
+A static graph consists of two sets: a series of V nodes (verticies), and E edges that together describe connections between the nodes. Another formulation of the graph is a square VxV adjacency matrix with nonzero elements corresponding to edges in the edgelist and their values representing weights or other attributes.
+
+A **dynamic graph** also comprises two sets: a set of V nodes, and a collection of T edgelists (or T VxV adjacency matrices) with one edgelist for each time. Although these dynamic graphs have a fixed set of vertices, the network evolves as edges appear or disappear or change their attributes over time.
+
+There is ample ongoing research into modeling how graphs change over time. There is a whole field of random graph theory which describes a generating process over a graph, like the parametric approach in structural break testing. In that line of research, structural breaktesting for dynamic graphs requires identifying how parameters of that graph-generating-process change over time.
+
+In contrast to the parametric approach of structural breaktesting, the nonparametric approach requires a distance or similarity measure between two graphs. There is also academic interest in outlining such different distance measures over graphs and their desirable properties. Without going into too much discussion over desirable properties of distance measures, those measures need to be informative enough to capture the topological nuances of the graphs while being simple enough to be computable in a reasonable amount of time. 
+
+Here I introduce a cheap, simple similarity measure between two graphs: the number of edges in common between two graphs. For a weighted graph, this measure becomes the dot-product between the edgelists of two graphs. If you have followed these blog post series, you will immediately recognize that using "the number of edges in common" between two graphs as a metric for structural break testing is equivalent to utilizing the cosine similary test statistic outlined in the previous post.
+
+To be a bit formal, suppose I have two graph adjaceny matrices at two different time intervals 
+```{r} 
+A1 <- matrix(c(1,0,1,1),nrow=2)
+A2 <- matrix(c(1,1,0,1),nrow=2)
+```
+
+The measure of "number of edges in common" between those two graphs is an elementwise-sum of elementwise-products.
+```{r}
+sum(A1 * A2)
+```
+
+In this case, A1 and A2 have two edges in common. That's it.
+
+If your dynamic edgelist is in sparse, long form: (time, node1, node2, edgeweight), it can be modified to generate a high-dimensional vector by concatenating the nodes to produce (time, node1-node2, edgeweight).
+
+The previous post was written to be a direct proof of the algebraic, geometric, and statistical properties of the cosine similarity between sample means. The key point I want to make here is that edgelists can be naturally considered high-dimensional vectors. Once we have a cheap, intuitive way of analysing high-dimensional vectors, we have also solved a large amount of analogous problems in dynamic graphs.
+
+
+---
+
+```{r, echo=FALSE, message=FALSE}
+library(slam)
+library(Matrix)
+source("C:/Users/sramesh/Documents/GitHub/helper.R") #helper functions
+source("C:/Users/sramesh/Documents/GitHub/spkmeans.R")
+load("inputdata.rdata")
+stationgeo<- read.csv("bikeStationLatLong.csv",header=FALSE)
+names(stationgeo) <- c("station","lat","long")
+
+library(ggmap)
+dcmap <- qmap("Washington, DC", zoom = 13, maptype='roadmap')
+edges<- dimnames(dtm_ts)[[2]]
+split_edges <- strsplit(edges,split=' <-> ')
+obj<- data.frame(do.call(rbind,split_edges))
+obj$edge <- edges
+stationdata <- stationgeo[which(stationgeo$station %in% union(obj$X1,obj$X2)),]
+obj<- merge(obj, stationgeo, by.x="X1", by.y="station")
+names(obj) <- c("X1","X2","egde","lat1","long1")
+obj<- merge(obj, stationgeo, by.x="X2", by.y="station")
+names(obj) <- c("X1","X2","edge", "lat2","long2","lat1","long1")
+obj <- obj[order(obj$edge),]
+
+plotstat <- function(v,timelabels) {
+  ylims = c(min(v[,timelabels]),max(v[,timelabels]))
+  plot(timelabels, v[1,timelabels], type='l', main="Test statistic with bootstrap",
+       xlim = c(min(timelabels),max(timelabels)), ylim = ylims,
+       ylab="statistic",xlab="t")
+  lines(timelabels, v[2,timelabels], col='red')
+  lines(timelabels, v[3,timelabels], col='red')
+  lines(timelabels, v[4,timelabels], col='red')
+  lines(timelabels, v[5,timelabels], col='red')
+  lines(timelabels, v[6,timelabels], col='red') 
+}
+
+explainbreak <- function(y,t,D,topN=10) {
+  pre <- colMeans(y[(t-D):(t-1),])
+  post <- colMeans(y[t:(t+D-1),])
+  featurelist<- dimnames(y)[[2]]
+  
+  list(time = dimnames(y)[[1]][t],
+       feature = featurelist,
+       pre = pre,
+       post = post,
+       delta = post-pre)
+}
+
+mapgraph <- function(weights,N=20) {
+  plotme <- obj
+  plotme$W <- weights/3
+  plotme$o_positive = order(weights,decreasing=TRUE)
+  plotme$o_negative = order(weights,decreasing=FALSE)
+  dcmap + geom_point(data = stationdata, aes(x = long, y = lat), size = 1) +
+    geom_segment(data= plotme[plotme$o_positive[1:N],], aes(x= long1, xend= long2, y= lat1, yend= lat2, size=W), colour="#0000FF44") +
+    geom_segment(data= plotme[plotme$o_negative[1:N],], aes(x= long1, xend= long2, y= lat1, yend= lat2, size=-W), colour="#FF000044")
+}
+
+
+D <- 8*7*2
+timecompare = (D+1):(1000-D+1)
+load("v.rdata")
+
+```
+
+
+Can we use structural breaks to identify and estimate the impact of a unexpected major shock (in this case, the government shutdown) on the Capital Bikeshare network? Yes, we can. First, I will describe data, second outline the key results, and third I provide the deeper analysis that explains how structural breaks were used to find those results.
+
+---
+
+###The Capital Bikeshare dataset
+
+Raw Capital Bikeshare data is available free on their website [here](http://www.capitalbikeshare.com/trip-history-data). Each record in the raw data is a ride, including the starting station, ending station, timestamp, and duration. A little bit of curation has to be done as data formats have changed over the years; specifically, timestamps and station naming conventions have evolved. This analysis focuses on data from July 1, 2013 to November 2, 2013. The data has resolution down to the second, but for our analysis we aggregated up to 3 hour time periods. This gave us a total of 1000 3-hour time intervals that span 5 months. There are a total of 347 geolocated bikeshare stations with continuous coverage over the half-year. After preprocessing, my dynamic, evolving Bikeshare network is a 347-vertex graph with 1000 different edgelists over the course of 5 months. 
+
+The data itself is stored and processed in long form (as an edgelist). The networks in each time slice are sparse. Of the possible (347)(346)/2 = 60031 possible undirected bike routes connecting two stations, only 17692 actually were recorded in the data. The data is read in as a dynamic edgelist: (timebin, undirected edge, number of rides) and converted to a 1000x17692 dimensional sparse matrix (using the *slam* and *Matrix* packages).
+
+Given the sparse matrix representation of our dynamic Bikeshare graph, to compute the distance matrix used in the cosine similary statistic, we compute the matrix dotproduct $X^{T}X$. This produces a 1000x1000 matrix where each element corresponds to the number of edges in common between two 3-hour graphs in the dynamic network. The final computationally intensive part is the computation of the test statistic and rolling window permutation test, whose exposition is in the previous two blog posts.
+
+The window size used in the analysis was two weeks: D= 112 (3 hour windows). The structural breaks null hypothesis is that the two week period before is the same as the two week period after.
+
+---
+
+###Results
+
+Below is the output from applying the high dimensional structural breaks algorithm to the Capital Bikeshare dynamic network. The black line is the cosine similarity between the sample mean edgelists statistic, and the five red lines correspond to the .01, .05, .5, .95, and .99 of the empirical distribution of the permutation test under the null hypothesis that no break occured. The local minima of the statistic, when below the .01 percent correspond to the time which a significant structural break likely occured.
+
+
+```{r, warning=FALSE, echo=FALSE}
+library(caTools)
+b<- intersect(which(v_ts[1,] == runmin(v_ts[1,],D)), which(v_ts[1,] < v_ts[6,]))
+b <- intersect(b,timecompare)
+
+#significant breaks
+
+plotstat(v_ts,timecompare)
+abline(v=b[2:4], lty='dashed',col='blue', lwd=2)
+```
+
+The three major local minima are highlighted in blue and correspond to these time intervals:
+
+```{r, echo=FALSE}
+dimnames(dtm_ts)[[1]][b[2:4]+D]
+```
+
+The [Federal Government Shutdown of 2013](https://en.wikipedia.org/wiki/United_States_federal_government_shutdown_of_2013) lasted from October 1 to October 16. This corresponds exactly to the timing of our second and third structural breaks. The algorithm has identified that *something* happened on those two days. Let's use the raw data to show you what happened.
+
+Below is plotted the impact of each of the structural breaks. What is plotted is a new network with edges corresponding to the change in the network before and after the break. Taking the average network for the two week duration before and two weeks after, we compute the raw difference in the number of rides between two stations on a given route. Net positive rides are colored blue and net negative rides are colored red.
+
+---
+
+First the beginning of the government shutdown. If you know DC topology you'll recognize that that the shutdown caused a noticable drop in biking towards federal building neighborhoods closer to the mall and a large uptick in biking in residential and entertainment districts (Logan Circle, Dupont, U St., Columbia Heights).
+
+
+```{r, warning=FALSE, echo=FALSE }
+
+w <- 3 #which break
+candidate<- explainbreak(rowNormalize(dtm_ts,l2=TRUE)^2,b[w]+D,D,100)
+candidate$time
+mapgraph(candidate$delta,60)
+```
+
+---
+
+Second, the end of the shutdown the government shutdown shows a reverse effect. Riders are going back to work and stop hanging out in residential neighborhoods.
+
+```{r, warning=FALSE, echo=FALSE }
+w <- 4 #which break
+candidate<- explainbreak(rowNormalize(dtm_ts,l2=TRUE)^2,b[w]+D,D,100)
+candidate$time
+mapgraph(candidate$delta,60)
+```
+
+---
+
+In summary, we are able to both identify when the shutdown happened, and its impact on the dynamic bikeshare network. This might seem like cheating because I knew what I would find before I started. However, there is a third noticable structural break at September 3rd which I hadn't anticipated. What happened then? Let's vizualize the change in the graph then:
+
+```{r, warning=FALSE, echo=FALSE }
+w <- 2 #which break
+candidate<- explainbreak(rowNormalize(dtm_ts,l2=TRUE)^2,b[w]+D,D,100)
+candidate$time
+mapgraph(candidate$delta,60)
+
+```
+
+Focusing on the two bikeshare stations in Adams Morgan, riders stopped riding to the station on the west side of Rock Creek and instead switched to the station on the east side of Rock Creek. If you go and look at the raw data, you'll actually see that there are *zero* rides to the west Adams Morgan station before this break. In other words, we have identified *when* Bikeshare changed its station configuration and the substitution effect of that policy decision. We didn't set out to find this result, but it illustrates that structural break testing can indeed find smaller, more unexpected changes in network topology over time (and when it happened). 
+
+
+--
+
+###Summary
+
+This blog series hopefully has provided a nice overview of structural break testing using large, high-dimensional data sets. Part 1 went back in time to explain how structural breaks have been used for decades in single-dimensional time series and the robustness of the tests that have been developed.  Part 2 focuses on the new challenges when faced with high dimensional data and presents how the classical methods applied to single-dimensions can be extended into high dimensions using the cosine similarty statistic.  This part, part 3 is an application of the theory of structural breaks to dynamic graphs, demonstrating how we can identify and estimate the impact of exogenous shocks on the Capital Bikeshare network.

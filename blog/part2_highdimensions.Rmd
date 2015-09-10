@@ -1,0 +1,201 @@
+---
+title: "Cosine Similarity and Structural Breaks in High Dimensions"
+output:
+  html_document:
+    fig_width: 12
+    fig_height: 10
+    fig_caption: true
+---
+
+
+The interesting, cutting edge problems in Data Science are driven by the fact that the new data sets that are being collected are best modeled in high dimensions. For example, textual data like those in tweets or other social media is frequently best modeled as a "word count" vector, where the dimensions of the vector are distinct words and the values are the counts of each word. Dictionaries in this world are immensely huge, leading to very high dimensional, sparse vectors. But from a practical standpoint, what does it even mean when we have a "time series" of word vectors? Well, the answer is that we can use these vectors to measure and estimate how "conversation" changes over time. But to do it, we need to be able to model structural breaks in high dimensions.
+
+The last post discussed how to check for the existence and timing of a structural break in a time series of scalars. Those methods are very effective for single dimensional time series, but what happens when we have multiple time series or a time series of multiple dimensions? In that case, the parametric approach requires modeling the entire way all of the time series covary together and evolve. One solution related to modeling the entire data-generating process is to use a VAR model. If you start to go down the path defining a data-generating process that generates the entire vector time series it becomes a difficult problem to estimate the parameters you need to conduct hypothesis tests. (For example, a VAR model requires estimating $P^{2}$ covariance matrix elements for $P$ dimensions). These approaches don't really scale well with the number of dimensions in your data.
+
+Here, I extend the nonparametric approach to structural breaktesting to higher dimensions.   Specifically, I introduce a simple and intuitive test statistic: the *cosine similarity between sample means*. Analagous to how distance matrices are used in a single dimension to construct Energy distance statistics, this cosine similar statistic can be computed directly from the matrix of pairwise dot-products between sample time intervals. The nonparametric, permutation-based hypothesis test can utilizes this cosine-similar statistic to test for a structural break in high dimensional vector time series,
+
+To paraphrase, like ANOVA, the test statistic compares whether the two time intervals before and after a suspected break are more similar within each interval than between the two intervals. A small modification from the single-dimensional nonparametric algoritm generates a new algorithm that can be used to identify the *timing* of breaks as well.
+
+At the end of this article I show how the test statistic works on real twitter data to identify important, unknown events in near real-time. 
+
+---
+
+###Structural breaks in high dimensions: the cosine similarity between sample means
+
+This section is math-heavy, but important because it is a potentially interesting mathematical insight. It probably is not a novel insight, relying on just a bit of algebra, but it certainly is never mentioned anywhere prominently in literature.
+
+First, some preliminaries. Our sample data is a time series of high dimensional vectors $x_{t} \in R^{p}$ with dimension $P$ with indices $t \in 1,2,...,T$ indicating time. We partition the sample into two nonoverlapping time intervals, $G_{1} \cup G_{2} = 1,2,...T, G_{1} \cap G_{2} = \emptyset$. The data from those two sets, "group1" and "group2," are independent samples of draws of high-dimensional random vectors from unknown probability distributions. Since we're checking for structural breaks, we will test the null that the data from both samples are drawn from the same probability distribution.
+
+For each of these two groups, let's take the average high-dimensional vector across time. Formally, denote the two sample group means, one for each of the two samples (with $\|G_{i}\|$ the size of sample $i$:
+
+$$S_{1} = \frac{\sum_{t \in G_{1}}x_{t}}{\|G_{1}\|}  ,\:\:\: S_{2} = \frac{\sum_{t \in G_{2}}x_{t}}{\|G_{2}\|}  $$
+
+The **cosine similarity statistic** is the squared cosine similarity between these two sample means:
+
+$$V = ( \frac{ S_{1}^{T} S_{2} } { \|S_{1}\| \|S_{2}\|})^{2} $$
+
+This cosine similarity statistic is our test statistic. It turns out that with a little algebra, we can show that this cosine similarity statistic can be computed in a different way, utilizing a pairwise similarity matrix. Denote the pairwise similarity matrix computed where each element is the inner product between two time series vectors $x_{i}, x_{j}$. This matrix will be used analogously to the pairwise distance matrix for time series in a single dimension:
+
+$$M_{TxT} : m_{ij} = x_{i}^{T}x_{j} = \sum_{p}{x_{ip}x_{jp}}$$
+
+Splitting the sample into two sets $G_{1},G_{2}$ also splits the similarity matrix $M$ into four quadrants-- two submatrices of within-group comparisons and two symmetric submatrices of between-group comparisons. Define the sum of the elements in each those four quadrants.
+
+$$S_{11} = \sum_{i\in G_{1}}\sum_{j\in G_{1}} m_{i,j} \\
+S_{22} = \sum_{i\in G_{2}}\sum_{j\in G_{2}} m_{i,j} ,\\
+S_{12} = \sum_{i\in G_{1}}\sum_{j\in G_{2}} m_{i,j} \\
+S_{21} = S_{12}$$
+
+Now, I present the important proposition. **The cosine similarity statistic is a function of these four quadrant sums alone.**
+
+$$V = ( \frac{ S_{1}^{T} S_{2} } { \|S_{1}\| \|S_{2}\|})^{2} = \frac{S_{12}^{2}}{S_{11} S_{22}}$$
+
+---
+
+The proof is purely algebraic, but interesting geometrically. To motivate it, let's first derive a lemma for an arbitrary partition $A,B$ with the notation from above:
+
+$$
+S_{AB} = \sum_{i\in A}\sum_{j\in B} m_{i,j} \\
+S_{AB} = \sum_{i\in A} \sum_{j\in B} \sum_{p} x_{ip}x_{jp} \\
+S_{AB} = \sum_{p} \sum_{i\in A} \sum_{j\in B} x_{ip}x_{jp} \\
+S_{AB} = \sum_{p} (\sum_{i\in A}x_{ip}) (\sum_{j\in B} x_{jp}) \\
+S_{AB} = \|A\| \|B\| \sum_{p} S_{Ap} S_{Bp} \\
+S_{AB} = \|A\| \|B\| S_{A}^{T} S_{B}
+$$
+
+This lemma is interesting because it applies to the norm of the sample mean of any set of vectors:
+
+
+$$\|S_{A}\|^{2} = S_{A}^{T} S_{A} \\
+\|S_{A}\|^{2} = \frac{S_{AA}}{ \|A\|^{2} }
+$$
+
+To illustrate this lemma with a similar example, suppose we had two vectors $x,y$. Applying this derivation states that the squared norm of the mean of those two vectors, $\|\frac{1}{2}(x+y)\|^{2}$ is the average of all four pairwise dot-products: $\frac{1}{4} (x^{T}x + x^{T}y + y^{T}x + y^{T}y)$. That's a cool insight geometrically.
+
+With the simple lemma, we can finish the proof of the main proposition :
+
+$$V = ( \frac{ S_{1}^{T} S_{2} } { \|S_{1}\| \|S_{2}\|})^{2} \\
+V = \frac{ ( S_{1}^{T}S_{2} ) ^{2}}{\|S_{1}\|^{2} \|S_{2}\|^{2}} \\
+V = \frac{ ( \frac{S_{12}}{\|G_{1}\| \|G_{2}\|} ) ^{2}}{ \frac{S_{11}}{\|G_{1}\|^2} \frac{S_{22}}{\|G_{2}\|^2}} \\
+V = \frac{S_{12}^{2}}{S_{11} S_{22}} \\
+V = ( \frac{ S_{1}^{T} S_{2} } { \|S_{1}\| \|S_{2}\|})^{2} = \frac{S_{12}^{2}}{S_{11} S_{22}}$$
+
+The proposition says that there are two ways of computing the test statistic-- we could either compute means and then the cosine similarity, or alternatively compute the distance matrix and work with the quadrant sums. Because of the permutation test in the algorithm, the latter approach is ultimately the more scalable solution since all of the information needed to produce a random reordering of the data is contained in the matrix of dot products. When our time series data comes in sparse-vector form: $(t,p,x_{tp})$ as (time, feature, value). The desired output is a $TxT$ pairwise dot product matrix $M$.
+
+---
+
+###Structural breaks in high dimensions: the algorithm
+
+The above section motivated and outlined the cosine similarity statistic and provided a link between its simple geometric explanation (the cosine similarity between the mean of two samples), and pairwise distance measurements. The actual hypothesis test for whether a structural break occurred at a given candidate time time $t$, and the algorithm to identify the most likely timing of the break is then exactly identical to the single dimensional case:
+
+1. Compute the pairwise dot product matrix $M_{TxT} : m_{ij} = x_{i}^{T}x_{j} = \sum_{p}{x_{ip}x_{jp}}$ and choose a **bandwidth** parameter D
+2. For each candidate time interval $t\in 1,2,...,T$:
+  + take the windowed submatrix  $M(t;D)$ of the entire matrix $M$ for the the set of points in the window $D$ time points before and after $t$, the current candidate time. $m_{ij} : i,j \in (t-D):(t+D-1)$
+  + compute the cosine similarity test statistic and bootstrap permutation percentiles from above $V(t) = \frac{S_{12}^{2}}{S_{11} S_{22}}$, using the matrix for the window $M(t;D)$, considering the candidate break to occur at $t$
+3. Find the local optima, the argmax $V(t)$
+
+The first article actually has the R code that implements this algorithm. The main change that one would need to make is to change the test statistic and change the input matrix-- a task I leave to the reader.
+
+---
+
+###Structural breaks in high dimensions: an example using Twitter
+
+All of this high dimensional structural breaks theory sounds great, but does the approach actually work? To illustrate an application of structural breaks on high dimensional time series, I'll walk through an example: twitter word counts during Super bowl XLVII. I took six hours of twitter data covering the Ravens-49ers Super Bowl on February 23, 2013. The raw twitter data was processed to produce word counts per minute-- our high dimensional time series. After stemming and removing stop words, I took the top 1024 most used words in the dataset over the course of 371 minutes. This 1024x371 matrix represents our high dimensional time series. The practical question we want to answer is **when** there was a structural break in the conversation on twitter. This data slice was chosen because there is a known surprise event that happened during this particular Super Bowl.
+
+To visualize our high-dimensional time series we can use a stacked bar chart. The figure below is a stacked bar chart displaying each word count over time. On the x-axis is time (in minutes). Each word has a different color and the size of the bars at each minute are the fraction of normalized word counts across all words. Data from all 1024 words are displayed, however only the top 100 words are colored. The bottom black color corresponds to the counts that comprise the remaining 924 words. This stacked barchart shows nicely the raw data as it evolves over time. The vectors per minutes are L2 normalized and displayed as squared values, i.e. points on a hypersphere.tthis normalization gets closer to the intuition of cosine similarity, which measures angles between points on a high-dimensional hypersphere. It also makes the height of the stacked bar equal to one.
+
+Noticable immediately is that big red splotch in the middle between minute 237 and minute 279. That splotch corresponds to the word "beyonce" who performed the halftime show that year (along with a Destiny's Child reunion).  Immediately after halftime, you'll notice the time series changes noticably for over 30 minutes. This event is the unexpected surprise-- the power went out during the Super Bowl blackout.
+
+```{r ,echo=FALSE}
+library(slam)
+library(Matrix)
+load("C:/Users/sramesh/Documents/GitHub/text-analysis/DISCONTINUITIES/superbowl.RData")
+source("C:/Users/sramesh/Documents/GitHub/helper.R") #helper functions
+source("C:/Users/sramesh/Documents/GitHub/spkmeans.R")
+palette <- readLines(file.path("C:/Users/sramesh/Documents/GitHub","colorpalette.txt"))
+palette <- rep(palette,2)
+
+dtm <- output$sourcedata
+dmat <- dtm %*% t(dtm)
+maxT <- dim(dmat)[1]
+
+#pick a bandwidth
+D<- 20
+#timecompare is time indices to test (have to omit beginning and end of length D)
+timecompare = (D+1):(maxT-D+1)
+
+
+dobarplot <- function(y) {
+  N <- 100
+  #compress sparse dimensions into sparsedim if too sparse
+  topd <- order(colSums(y),decreasing=TRUE)[1:N]
+  smallset <- cbind(rowSums(y[,-topd]),as.matrix(y[,topd]))
+  colnames(smallset)[length(topd)+1] <- "others"
+  barplot(t(smallset[timecompare,]),beside=FALSE, border=NA, space=0, col = c("black",palette[3+1:N]), main="Twitter word counts")
+}
+
+
+stat_func <- function(m,b) {
+  l <- dim(m)[1]
+  g1 <- 1:b
+  g2 <- (b+1):l
+  (sum(m[g1,g2])^2)/( sum(m[g1,g1]) *sum(m[g2,g2]) )
+}
+
+nboots <- 100
+
+#for each t in timecompare
+v<- sapply(timecompare, function(t){
+    #create subset matrix 
+    pre_set <- (t-D):(t-1)
+    post_set <- (t):(t+D-1)
+    m <- dmat[c(pre_set,post_set),c(pre_set,post_set)]
+    
+    #compute statistic
+    teststat <- stat_func(m,D)
+    boots <- sapply(1:nboots, function(s){
+      #reshuffle the data (with replacement)
+      i <- sample(1:(2*D),2*D,replace=FALSE)
+      stat_func(m[i,i],D)
+      })
+
+    #find the pctile intervals off of the bootstrap
+    boot = quantile(boots,c(.5,.05,.01))
+    
+    #return statistic and bootstrap confidence intervals
+    c(teststat,boot)
+  })
+
+
+plotstat <- function(v) {
+  ylim = c(min(v),max(v))
+  plot(timecompare,v[1,], type='l', main="Test statistic with bootstrap", xlim=c(min(timecompare),max(timecompare)),ylim=ylim,
+       ylab="statistic",xlab="t")
+  lines(timecompare,v[2,], col='red')
+  lines(timecompare,v[3,], col='red')
+  lines(timecompare,v[4,], col='red')
+}
+
+
+
+library(caTools)
+#b<- timecompare[which.min(v[1,])]
+b<- timecompare[which(v[1,] == runmin(v[1,],D))]
+dobarplot(rowNormalize(dtm)^2)
+abline(v=b-D, lty='dashed',col='blue', lwd=2)
+```
+The dashed blue vertical lines are the estimates from my implementation of the cosine-similarity based structural breaks algorithm.  The structural breaks algorithm correctly identifies the minute the power went out during the superbowl. The bottom panel displays value of the test statistic, the cosine similarity between sample means, (in black) along with the permutation test confidence intervals (in red). Highlighted are the local minimum minutes (in blue), which we hoped would identify the minute of the strucutral break. 
+
+Superimposing the structural breaks local minimums on the twitter word counts graph shows us what we expected: we can correctly identify the timing of important major events surrounding Super Bowl XLVII. The major events correspond to the halftime show (~ minute 237), the minute the power went out (~ minute 279), when the power returned (~ minute 321), along with when the game started and when the first commercial break happens.
+ 
+```{r, echo=FALSE}
+plotstat(v)
+abline(v=b, lty='dashed',col='blue', lwd=2)
+```
+
+---
+
+In summary, this post extends structural breaktesting beyond a single dimension to focus on identifying meaningful breaks in a high-dimensional time series. The statistic used, the cosine similarity between sample means, feels very similar to and is applied almost like energy distance in breaktesting a single-dimensional time series. It also has some interesting algebraic and geometric motivations behind it. Finally, I showed an example of the algorithm in action on Super Bowl twitter data, a vector of word counts that evolve over time (each minute).
+
+The next and last post will walk through yet another extension of structural breaktesting, placing it in the context of dynamic graphs. Once we have addressed the high-dimensional time series problem, it is a natural next step to think about graphs as high-dimensional vectors. The application in the next post is about identifying and estimating the impact of the government shutdown of 2014 on the Washington DC Bikeshare network.
+
+
